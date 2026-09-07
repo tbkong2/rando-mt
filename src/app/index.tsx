@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
     maxWidth: MaxContentWidth,
   },
   heroSection: {
-    alignItems: 'left',
+    alignItems: 'center',
     justifyContent: 'center',
     flex: 1,
     paddingHorizontal: Spacing.four,
