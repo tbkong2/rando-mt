@@ -63,7 +63,7 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flex: 2,
     justifyContent: 'center',
     flexDirection: 'row',
   },
@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
     maxWidth: MaxContentWidth,
   },
   heroSection: {
-    alignItems: 'center',
+    alignItems: 'left',
     justifyContent: 'center',
     flex: 1,
     paddingHorizontal: Spacing.four,
