@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
-import { Dimensions, PanResponder, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, PanResponder, StyleSheet, Text, View } from 'react-native';
 
 const AVATAR_SIZE = 40;
 const JOYSTICK_SIZE = 100;
@@ -17,6 +17,15 @@ const LOBBY_BG: Record<Arch, number> = {
   sporty: require('@/assets/lobbies/sporty.png'),
 };
 
+// Walkable floor per archetype, as fractions of the frame (0 = left/top edge,
+// 1 = right/bottom edge) — eyeballed against each PNG so the avatar stays
+// clear of the counter/stage/bar and inside the walls.
+type FloorRect = { x0: number; y0: number; x1: number; y1: number };
+const FLOORS: Record<Arch, FloorRect> = {
+  chill:  { x0: 0.10, y0: 0.34, x1: 0.90, y1: 0.86 },
+  chaos:  { x0: 0.10, y0: 0.30, x1: 0.72, y1: 0.92 },
+  sporty: { x0: 0.10, y0: 0.44, x1: 0.90, y1: 0.93 },
+};
 // 9:16 letterbox frame, sized to the screen and centred on the dark backdrop
 // (mirrors rando's #lobby / #lobby-frame).
 const screen = Dimensions.get('window');
@@ -26,25 +35,45 @@ const FRAME_WIDTH = (FRAME_HEIGHT * 9) / 16;
 export default function Index() {
   // No archetype selector yet — change this default to preview chaos / sporty.
   const [arch] = useState<Arch>('chill');
-  const [position, setPosition] = useState({
-    x: FRAME_WIDTH / 2 - AVATAR_SIZE / 2,
-    y: FRAME_HEIGHT / 2,
+  // Spawn near the bottom-centre of the floor, like walking in through a door.
+  const [position, setPosition] = useState(() => {
+    const floor = FLOORS[arch];
+    return {
+      x: ((floor.x0 + floor.x1) / 2) * FRAME_WIDTH - AVATAR_SIZE / 2,
+      y: floor.y1 * FRAME_HEIGHT - AVATAR_SIZE,
+    };
   });
   const positionRef = useRef(position);
   const [thumbOffset, setThumbOffset] = useState({ x: 0, y: 0 });
   const directionRef = useRef({ x: 0, y: 0 }); // -1 to 1 on each axis
 
-  const [joystickSide, setJoystickSide] = useState<'left' | 'right'>('right');
-
+  // null = hidden. Set to the touch's frame-local {x, y} the moment a drag
+  // starts in the bottom half; cleared again on release.
+  const [joystickOrigin, setJoystickOrigin] = useState<{ x: number; y: number } | null>(null);
+  const resetJoystick = () => {
+    setThumbOffset({ x: 0, y: 0 });
+    directionRef.current = { x: 0, y: 0 };
+    setJoystickOrigin(null);
+  };
   useEffect(() => {
+    // Pixel bounds for this archetype's floor rect — the avatar's top-left
+    // corner is clamped here so the whole 40x40 box stays inside the tiles.
+    const floor = FLOORS[arch];
+    const minX = floor.x0 * FRAME_WIDTH;
+    const maxX = floor.x1 * FRAME_WIDTH - AVATAR_SIZE;
+    const minY = floor.y0 * FRAME_HEIGHT;
+    const maxY = floor.y1 * FRAME_HEIGHT - AVATAR_SIZE;
+
     const interval = setInterval(() => {
       const { x: dx, y: dy } = directionRef.current;
       if (dx === 0 && dy === 0) return;
 
       let newX = positionRef.current.x + dx * MOVE_SPEED;
-      let newY = positionRef.current.y + dy * MOVE_SPEED;
-      newX = Math.max(0, Math.min(newX, FRAME_WIDTH - AVATAR_SIZE));
-      newY = Math.max(0, Math.min(newY, FRAME_HEIGHT - AVATAR_SIZE));
+      // 0.82: vertical steps read as "shorter" against the angled scene art,
+      // giving a hint of depth instead of flat top-down movement.
+      let newY = positionRef.current.y + dy * MOVE_SPEED * 0.82;
+      newX = Math.max(minX, Math.min(newX, maxX));
+      newY = Math.max(minY, Math.min(newY, maxY));
 
       const newPosition = { x: newX, y: newY };
       positionRef.current = newPosition;
@@ -52,31 +81,35 @@ export default function Index() {
     }, 16);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [arch]);
 
   const joystickPanResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onPanResponderMove: (_, gesture) => {
-        let { dx, dy } = gesture;
-
-        // Keep the thumb inside the joystick's circular base
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance > MAX_RADIUS) {
-          const angle = Math.atan2(dy, dx);
-          dx = Math.cos(angle) * MAX_RADIUS;
-          dy = Math.sin(angle) * MAX_RADIUS;
-        }
-
-        setThumbOffset({ x: dx, y: dy });
-        directionRef.current = { x: dx / MAX_RADIUS, y: dy / MAX_RADIUS };
-      },
-      onPanResponderRelease: () => {
-        setThumbOffset({ x: 0, y: 0 });
-        directionRef.current = { x: 0, y: 0 };
-      },
-    })
-  ).current;
+    // Only claim the gesture if it STARTS in the bottom half of the frame.
+    // locationY is relative to the view the responder is attached to (the
+    // full-frame touch layer in the JSX below), so no offset math needed.
+    onStartShouldSetPanResponder: (evt) => evt.nativeEvent.locationY > FRAME_HEIGHT / 2,
+    onPanResponderGrant: (evt) => {
+      const { locationX, locationY } = evt.nativeEvent;
+      setJoystickOrigin({ x: locationX, y: locationY });
+    },
+    onPanResponderMove: (_, gesture) => {
+      // unchanged — dx/dy are already relative to wherever the touch started,
+      // so dragging past the halfway line afterward is naturally allowed.
+      let { dx, dy } = gesture;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > MAX_RADIUS) {
+        const angle = Math.atan2(dy, dx);
+        dx = Math.cos(angle) * MAX_RADIUS;
+        dy = Math.sin(angle) * MAX_RADIUS;
+      }
+      setThumbOffset({ x: dx, y: dy });
+      directionRef.current = { x: dx / MAX_RADIUS, y: dy / MAX_RADIUS };
+    },
+    onPanResponderRelease: resetJoystick,
+    onPanResponderTerminate: resetJoystick, // e.g. an incoming call interrupts the touch
+  })
+).current;
 
   return (
     <View style={styles.backdrop}>
@@ -91,29 +124,26 @@ export default function Index() {
           <Text style={styles.avatarLabel}>YOU</Text>
         </View>
 
-        {/* small toggle button, top corner */}
-        <TouchableOpacity
-          style={styles.toggleButton}
-          onPress={() => setJoystickSide((prev) => (prev === 'right' ? 'left' : 'right'))}
-        >
-          <Text style={styles.toggleButtonText}>⇄</Text>
-        </TouchableOpacity>
+        {/* invisible layer covering the whole frame — decides whether a touch starts the joystick */}
+        <View style={StyleSheet.absoluteFill} {...joystickPanResponder.panHandlers} />
 
-        {/* Joystick position depends on joystickSide */}
-        <View
-          style={[
-            styles.joystickBase,
-            joystickSide === 'right' ? styles.joystickRight : styles.joystickLeft,
-          ]}
-          {...joystickPanResponder.panHandlers}
-        >
+        {/* joystick only exists while a touch is active */}
+        {joystickOrigin && (
           <View
+            pointerEvents="none"
             style={[
-              styles.joystickThumb,
-              { transform: [{ translateX: thumbOffset.x }, { translateY: thumbOffset.y }] },
+              styles.joystickBase,
+              { left: joystickOrigin.x - JOYSTICK_SIZE / 2, top: joystickOrigin.y - JOYSTICK_SIZE / 2 },
             ]}
-          />
-        </View>
+          >
+            <View
+              style={[
+                styles.joystickThumb,
+                { transform: [{ translateX: thumbOffset.x }, { translateY: thumbOffset.y }] },
+              ]}
+            />
+          </View>
+        )}
       </View>
     </View>
   );
@@ -135,7 +165,7 @@ const styles = StyleSheet.create({
   title: {
     position: 'absolute',
     top: 22,
-    left: 60, // clear of the toggle button until the HUD is restyled
+    left: 60, // TODO: move to rando's left:14 once an exit button takes this corner (step 4)
     zIndex: 5,
     color: '#fff',
     fontSize: 12,
@@ -164,7 +194,6 @@ const styles = StyleSheet.create({
   },
   joystickBase: {
     position: 'absolute',
-    bottom: 30,
     width: JOYSTICK_SIZE,
     height: JOYSTICK_SIZE,
     borderRadius: JOYSTICK_SIZE / 2,
@@ -174,12 +203,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  joystickLeft: {
-    left: 30,
-  },
-  joystickRight: {
-    right: 30,
-  },
   joystickThumb: {
     width: THUMB_SIZE,
     height: THUMB_SIZE,
@@ -187,23 +210,5 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0c674',
     borderWidth: 2,
     borderColor: '#1a1a1a',
-  },
-  toggleButton: {
-    position: 'absolute',
-    top: 16,
-    left: 16,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  toggleButtonText: {
-    color: '#f0c674',
-    fontSize: 18,
-    fontWeight: 'bold',
   },
 });
