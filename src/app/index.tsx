@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Dimensions, PanResponder, StyleSheet, Text, View } from 'react-native';
 
 const AVATAR_SIZE = 40;
-const JOYSTICK_SIZE = 100;
-const THUMB_SIZE = 40;
+const JOYSTICK_SIZE = 104;
+const THUMB_SIZE = 44;
 const MAX_RADIUS = (JOYSTICK_SIZE - THUMB_SIZE) / 2;
 const MOVE_SPEED = 3; // lower = slower/more controlled, higher = faster
 
@@ -46,7 +46,7 @@ export default function Index() {
   const positionRef = useRef(position);
   const [thumbOffset, setThumbOffset] = useState({ x: 0, y: 0 });
   const directionRef = useRef({ x: 0, y: 0 }); // -1 to 1 on each axis
-
+  const [visual, setVisual] = useState({ scale: 1, bob: 0 }); 
   // null = hidden. Set to the touch's frame-local {x, y} the moment a drag
   // starts in the bottom half; cleared again on release.
   const [joystickOrigin, setJoystickOrigin] = useState<{ x: number; y: number } | null>(null);
@@ -66,23 +66,34 @@ export default function Index() {
 
     const interval = setInterval(() => {
       const { x: dx, y: dy } = directionRef.current;
-      if (dx === 0 && dy === 0) return;
+      const moving = dx !== 0 || dy !== 0;
 
-      let newX = positionRef.current.x + dx * MOVE_SPEED;
-      // 0.82: vertical steps read as "shorter" against the angled scene art,
-      // giving a hint of depth instead of flat top-down movement.
-      let newY = positionRef.current.y + dy * MOVE_SPEED * 0.82;
-      newX = Math.max(minX, Math.min(newX, maxX));
-      newY = Math.max(minY, Math.min(newY, maxY));
+      if (moving) {
+        let newX = positionRef.current.x + dx * MOVE_SPEED;
+        // 0.82: vertical steps read as "shorter" against the angled scene art,
+        // giving a hint of depth instead of flat top-down movement.
+        let newY = positionRef.current.y + dy * MOVE_SPEED * 0.82;
+        newX = Math.max(minX, Math.min(newX, maxX));
+        newY = Math.max(minY, Math.min(newY, maxY));
 
-      const newPosition = { x: newX, y: newY };
-      positionRef.current = newPosition;
-      setPosition(newPosition);
+        const newPosition = { x: newX, y: newY };
+        positionRef.current = newPosition;
+        setPosition(newPosition);
+      }
+
+      // Depth: feet position as a fraction of the frame height, same formula
+      // rando uses (0.72 + y*0.55) — taller near the bottom, smaller near the top.
+      const feetY = (positionRef.current.y + AVATAR_SIZE) / FRAME_HEIGHT;
+      const scale = 0.72 + feetY * 0.55;
+
+      // Walk bob: a fast little sine wave, only while actually moving.
+      const bob = moving ? Math.abs(Math.sin((Date.now() / 1000) * 9)) * AVATAR_SIZE * 0.16 : 0;
+
+      setVisual({ scale, bob });
     }, 16);
 
     return () => clearInterval(interval);
   }, [arch]);
-
   const joystickPanResponder = useRef(
     PanResponder.create({
     // Only claim the gesture if it STARTS in the bottom half of the frame.
@@ -119,8 +130,28 @@ export default function Index() {
 
         <Text style={styles.title}>{arch}</Text>
 
-        {/* Avatar is just a visual placeholder for now (styled in a later step) */}
-        <View style={[styles.avatar, { top: position.y, left: position.x }]}>
+        {/* contact shadow — anchored at the feet, grows/shrinks with depth, never bobs */}
+        <View
+          style={[
+            styles.avatarShadow,
+            {
+              left: position.x + AVATAR_SIZE / 2,
+              top: position.y + AVATAR_SIZE,
+              transform: [{ translateX: '-50%' }, { scaleX: visual.scale }, { scaleY: visual.scale }],
+            },
+          ]}
+        />
+
+        <View
+          style={[
+            styles.avatar,
+            {
+              top: position.y,
+              left: position.x,
+              transform: [{ scale: visual.scale }, { translateY: -visual.bob }],
+            },
+          ]}
+        >
           <Text style={styles.avatarLabel}>YOU</Text>
         </View>
 
@@ -164,8 +195,8 @@ const styles = StyleSheet.create({
   },
   title: {
     position: 'absolute',
-    top: 22,
-    left: 60, // TODO: move to rando's left:14 once an exit button takes this corner (step 4)
+    top: 16,
+    left: 14, // matches rando's #lobby-title — nothing else occupies this corner now
     zIndex: 5,
     color: '#fff',
     fontSize: 12,
@@ -197,9 +228,9 @@ const styles = StyleSheet.create({
     width: JOYSTICK_SIZE,
     height: JOYSTICK_SIZE,
     borderRadius: JOYSTICK_SIZE / 2,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.4)',
+    backgroundColor: 'rgba(15,17,22,0.28)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.35)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -207,8 +238,18 @@ const styles = StyleSheet.create({
     width: THUMB_SIZE,
     height: THUMB_SIZE,
     borderRadius: THUMB_SIZE / 2,
-    backgroundColor: '#f0c674',
-    borderWidth: 2,
-    borderColor: '#1a1a1a',
+    backgroundColor: 'rgba(255,255,255,0.82)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 6, // Android shadow equivalent
+  },
+  avatarShadow: {
+    position: 'absolute',
+    width: AVATAR_SIZE * 0.8,
+    height: AVATAR_SIZE * 0.28,
+    borderRadius: AVATAR_SIZE, // large enough to stay elliptical at any size
+    backgroundColor: 'rgba(10,14,20,0.28)', // same value rando uses
   },
 });
