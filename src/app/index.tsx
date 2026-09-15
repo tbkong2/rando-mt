@@ -243,8 +243,8 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.4,
     shadowRadius: 10,
-    elevation: 6, // Android shadow equivalent
-  },
+    elevation: 6, // Android shadow equivalent 
+  }, //f
   avatarShadow: {
     position: 'absolute',
     width: AVATAR_SIZE * 0.8,
