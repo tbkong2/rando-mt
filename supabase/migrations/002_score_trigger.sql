@@ -2,6 +2,7 @@ create or replace function award_vote_points()
 returns trigger
 language plpgsql
 security definer
+set search_path = ''
 as $$
 declare
   points integer := 4 - new.rank;
