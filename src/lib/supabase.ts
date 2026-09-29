@@ -1,4 +1,4 @@
-// Shared Supabase client for rando-mt (Art Gallery + anything else that
+// Shared Supabase client for rando-mt (Caption It + anything else that
 // needs a real backend). The URL and anon key are meant to ship in client
 // code — the anon key only grants what Row Level Security policies allow,
 // same pattern as rando's web/config.js.
@@ -16,13 +16,18 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
+// Web's static pre-render runs in Node, where there is no window and so no
+// storage to read a session from. React Native defines window, so phones
+// always take the persisted path.
+const isServer = typeof window === 'undefined';
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     // AsyncStorage persists the session across app restarts; without it
     // every launch would start as a brand-new anonymous session.
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
+    storage: isServer ? undefined : AsyncStorage,
+    autoRefreshToken: !isServer,
+    persistSession: !isServer,
     detectSessionInUrl: false,
   },
 });
